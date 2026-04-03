@@ -125,7 +125,7 @@ const STORAGE_KEYS = {
 const OAUTH_CONFIG = {
   github: {
     label: "GitHub",
-    clientId: "",
+    clientId: "Iv23liSDtMzhXUAadUPm",
     authorizeUrl: "https://github.com/login/oauth/authorize",
     scope: "read:user user:email",
     extraParams: {

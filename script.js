@@ -144,10 +144,10 @@ const OAUTH_CONFIG = {
 };
 
 const SOCIAL_PLACEHOLDERS = {
-  google: "Google login is not wired up yet.",
-  discord: "Discord login is not wired up yet.",
-  microsoft: "Microsoft login is not wired up yet.",
-  apple: "Apple login is not wired up yet.",
+  google: "Google login is not configured yet.",
+  discord: "Discord login is not configured yet.",
+  microsoft: "Microsoft login is not configured yet.",
+  apple: "Apple login is not configured yet.",
 };
 
 const appState = {
@@ -285,7 +285,7 @@ function ensureUsername() {
   try {
     generated = randomUsername();
   } catch (error) {
-    setLoginStatus("This browser does not support secure random usernames.", "error");
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
     return "";
   }
 
@@ -309,7 +309,7 @@ function launchSession(type, game = getSelectedGame()) {
       createdAt: new Date().toISOString(),
     };
   } catch (error) {
-    setLoginStatus("This browser does not support secure lobby codes.", "error");
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
     return;
   }
 
@@ -337,7 +337,7 @@ function beginOAuthLogin(provider) {
   try {
     state = createStateToken(provider);
   } catch (error) {
-    setLoginStatus("This browser does not support secure OAuth sign-in.", "error");
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
     return;
   }
 
@@ -516,7 +516,7 @@ document.getElementById("diceBtn").addEventListener("click", () => {
     document.getElementById("usernameInput").value = randomUsername();
     setLoginStatus("Generated a random username.", "info");
   } catch (error) {
-    setLoginStatus("This browser does not support secure random usernames.", "error");
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
   }
 });
 

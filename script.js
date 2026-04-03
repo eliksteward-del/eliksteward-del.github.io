@@ -114,6 +114,47 @@ const GAME_MODES = [
   },
 ];
 
+const DEFAULT_GAME_MODE_ID = "survival";
+const STORAGE_KEYS = {
+  theme: "bz-theme",
+  lastSession: "bz-last-session",
+  userSession: "bz-user-session",
+  pendingOAuth: "bz-pending-oauth",
+};
+
+const OAUTH_CONFIG = {
+  github: {
+    label: "GitHub",
+    clientId: "",
+    authorizeUrl: "https://github.com/login/oauth/authorize",
+    scope: "read:user user:email",
+    extraParams: {
+      allow_signup: "true",
+    },
+  },
+  figma: {
+    label: "Figma",
+    clientId: "",
+    authorizeUrl: "https://www.figma.com/oauth",
+    scope: "file_read",
+    extraParams: {
+      response_type: "code",
+    },
+  },
+};
+
+const SOCIAL_PLACEHOLDERS = {
+  google: "Google login is not wired up yet.",
+  discord: "Discord login is not wired up yet.",
+  microsoft: "Microsoft login is not wired up yet.",
+  apple: "Apple login is not wired up yet.",
+};
+
+const appState = {
+  selectedGame: null,
+  activeInviteLink: "",
+};
+
 // ---- Random Usernames ----
 const ADJ = ["Blocky","Pixel","Cubic","Neon","Swift","Shadow","Iron","Golden","Sky","Lava","Frost","Cyber","Turbo","Mighty","Silent"];
 const NOUNS = ["Builder","Warrior","Miner","Dragon","Wolf","Panda","Knight","Gamer","Ninja","Creeper","Hero","Legend","Storm","Phantom","Blaze"];
@@ -136,6 +177,232 @@ function animatePlayerCount() {
     if (base > 9999) base = 9999;
     el.textContent = `🟢 ${base.toLocaleString()}`;
   }, 3000);
+}
+
+function getGameById(id) {
+  return GAME_MODES.find((game) => game.id === id) || GAME_MODES.find((game) => game.id === DEFAULT_GAME_MODE_ID) || GAME_MODES[0];
+}
+
+function getSelectedGame() {
+  return appState.selectedGame || getGameById(DEFAULT_GAME_MODE_ID);
+}
+
+function getOAuthRedirectUri() {
+  return `${window.location.origin}${window.location.pathname}`;
+}
+
+function generateLobbyCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function createStateToken(provider) {
+  const randomPart = window.crypto?.randomUUID ? window.crypto.randomUUID() : Math.random().toString(36).slice(2);
+  return `${provider}:${randomPart}`;
+}
+
+function getStoredJson(key) {
+  const rawValue = localStorage.getItem(key);
+  if (!rawValue) return null;
+
+  try {
+    return JSON.parse(rawValue);
+  } catch (error) {
+    localStorage.removeItem(key);
+    return null;
+  }
+}
+
+function buildInviteLink(session) {
+  const inviteUrl = new URL(window.location.href);
+  inviteUrl.searchParams.set("lobby", session.code);
+  inviteUrl.searchParams.set("game", session.gameId);
+  return inviteUrl.toString();
+}
+
+function setLoginStatus(message, tone = "") {
+  const statusEl = document.getElementById("loginStatus");
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.className = "login-status";
+  if (tone) statusEl.classList.add(tone);
+}
+
+function renderSessionStatus(session) {
+  const panel = document.getElementById("sessionStatus");
+  const title = document.getElementById("sessionStatusTitle");
+  const text = document.getElementById("sessionStatusText");
+  const copyBtn = document.getElementById("copyInviteBtn");
+
+  if (!panel || !title || !text || !copyBtn) return;
+
+  if (!session) {
+    panel.hidden = true;
+    copyBtn.hidden = true;
+    appState.activeInviteLink = "";
+    return;
+  }
+
+  panel.hidden = false;
+  title.textContent = session.type === "create-lobby" ? `Lobby ${session.code} created` : `${session.gameName} quick play ready`;
+  text.textContent = session.type === "create-lobby"
+    ? `${session.username} can share lobby ${session.code} to invite friends to ${session.gameName}.`
+    : `${session.username} joined ${session.gameName} quick play. Match code: ${session.code}.`;
+
+  appState.activeInviteLink = session.type === "create-lobby" ? buildInviteLink(session) : "";
+  copyBtn.hidden = !appState.activeInviteLink;
+}
+
+function saveSession(session) {
+  localStorage.setItem(STORAGE_KEYS.lastSession, JSON.stringify(session));
+  renderSessionStatus(session);
+}
+
+function ensureUsername() {
+  const input = document.getElementById("usernameInput");
+  if (!input) return randomUsername();
+
+  const current = input.value.trim();
+  if (current) return current;
+
+  const generated = randomUsername();
+  input.value = generated;
+  setLoginStatus(`Using random username ${generated}.`, "info");
+  return generated;
+}
+
+function launchSession(type, game = getSelectedGame()) {
+  const username = ensureUsername();
+  const session = {
+    type,
+    username,
+    gameId: game.id,
+    gameName: game.name,
+    code: generateLobbyCode(),
+    createdAt: new Date().toISOString(),
+  };
+
+  saveSession(session);
+  closeModal("gameModeModal");
+  setLoginStatus(
+    type === "create-lobby"
+      ? `Lobby ${session.code} is ready for ${game.name}.`
+      : `Quick play connected for ${game.name} as ${username}.`,
+    "success"
+  );
+}
+
+function beginOAuthLogin(provider) {
+  const config = OAUTH_CONFIG[provider];
+  if (!config) return;
+
+  if (!config.clientId) {
+    setLoginStatus(`${config.label} login is ready, but I still need the ${config.label} client ID.`, "warning");
+    return;
+  }
+
+  const state = createStateToken(provider);
+  localStorage.setItem(STORAGE_KEYS.pendingOAuth, JSON.stringify({ provider, state }));
+
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: getOAuthRedirectUri(),
+    scope: config.scope,
+    state,
+  });
+
+  Object.entries(config.extraParams || {}).forEach(([key, value]) => {
+    params.set(key, value);
+  });
+
+  window.location.assign(`${config.authorizeUrl}?${params.toString()}`);
+}
+
+function completeOAuthLogin(provider) {
+  const config = OAUTH_CONFIG[provider];
+  const username = `${config.label}Player`;
+  const userSession = {
+    provider,
+    username,
+    connectedAt: new Date().toISOString(),
+  };
+
+  localStorage.setItem(STORAGE_KEYS.userSession, JSON.stringify(userSession));
+  document.getElementById("usernameInput").value = username;
+  setLoginStatus(`Signed in with ${config.label}.`, "success");
+}
+
+function clearOAuthParams() {
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.delete("code");
+  nextUrl.searchParams.delete("state");
+  nextUrl.searchParams.delete("error");
+  nextUrl.searchParams.delete("error_description");
+  window.history.replaceState({}, document.title, nextUrl.toString());
+}
+
+function handleOAuthCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const state = params.get("state");
+  const error = params.get("error");
+  const pending = getStoredJson(STORAGE_KEYS.pendingOAuth);
+
+  if (error) {
+    setLoginStatus("OAuth sign-in was cancelled or failed.", "warning");
+    localStorage.removeItem(STORAGE_KEYS.pendingOAuth);
+    clearOAuthParams();
+    return;
+  }
+
+  if (!code || !state || !pending) return;
+
+  if (pending.state !== state || !OAUTH_CONFIG[pending.provider]) {
+    setLoginStatus("OAuth sign-in could not be verified.", "error");
+    localStorage.removeItem(STORAGE_KEYS.pendingOAuth);
+    clearOAuthParams();
+    return;
+  }
+
+  localStorage.removeItem(STORAGE_KEYS.pendingOAuth);
+  completeOAuthLogin(pending.provider);
+  clearOAuthParams();
+}
+
+function loadStoredUserSession() {
+  const userSession = getStoredJson(STORAGE_KEYS.userSession);
+  if (!userSession) return;
+
+  document.getElementById("usernameInput").value = userSession.username;
+  const providerLabel = OAUTH_CONFIG[userSession.provider]?.label || userSession.provider;
+  setLoginStatus(`Signed in with ${providerLabel}.`, "success");
+}
+
+function loadSavedSession() {
+  const session = getStoredJson(STORAGE_KEYS.lastSession);
+  if (!session) return;
+  renderSessionStatus(session);
+}
+
+async function copyInviteLink() {
+  if (!appState.activeInviteLink) return;
+
+  try {
+    await navigator.clipboard.writeText(appState.activeInviteLink);
+    setLoginStatus("Invite link copied.", "success");
+  } catch (error) {
+    window.prompt("Copy this invite link:", appState.activeInviteLink);
+  }
+}
+
+function wireSocialButtons() {
+  Object.entries(SOCIAL_PLACEHOLDERS).forEach(([provider, message]) => {
+    const button = document.getElementById(`${provider}LoginBtn`);
+    if (!button) return;
+    button.addEventListener("click", () => setLoginStatus(message, "warning"));
+  });
+
+  document.getElementById("githubLoginBtn").addEventListener("click", () => beginOAuthLogin("github"));
+  document.getElementById("figmaLoginBtn").addEventListener("click", () => beginOAuthLogin("figma"));
 }
 
 // ---- Build Game Cards ----
@@ -167,6 +434,7 @@ function buildGameGrid() {
 
 // ---- Open Game Modal ----
 function openGameModal(game) {
+  appState.selectedGame = game;
   document.getElementById("modalGameIcon").textContent   = game.icon;
   document.getElementById("modalGameTitle").textContent  = game.name;
   document.getElementById("modalGameDesc").textContent   = game.desc;
@@ -200,11 +468,11 @@ function toggleSetting(btn) {
 
 function changeTheme(value) {
   document.documentElement.setAttribute("data-theme", value === "dark" ? "" : value);
-  localStorage.setItem("bz-theme", value);
+  localStorage.setItem(STORAGE_KEYS.theme, value);
 }
 
 function loadTheme() {
-  const saved = localStorage.getItem("bz-theme") || "dark";
+  const saved = localStorage.getItem(STORAGE_KEYS.theme) || "dark";
   const sel = document.getElementById("themeSelect");
   if (sel) sel.value = saved;
   changeTheme(saved);
@@ -212,14 +480,7 @@ function loadTheme() {
 
 // ---- Play Button ----
 document.getElementById("playBtn").addEventListener("click", () => {
-  const username = document.getElementById("usernameInput").value.trim();
-  if (!username) {
-    const generated = randomUsername();
-    document.getElementById("usernameInput").value = generated;
-    alert(`No username entered – playing as: ${generated}\n\n(Game launching not yet implemented – this is a UI preview)`);
-  } else {
-    alert(`Welcome, ${username}!\n\n(Game launching not yet implemented – this is a UI preview)`);
-  }
+  launchSession("quick-play", getSelectedGame());
 });
 
 // ---- Dice Button ----
@@ -241,6 +502,18 @@ document.getElementById("friendsBtn").addEventListener("click", (e) => {
   openModal("friendsModal");
 });
 
+document.getElementById("modalQuickPlayBtn").addEventListener("click", () => {
+  launchSession("quick-play", getSelectedGame());
+});
+
+document.getElementById("modalCreateLobbyBtn").addEventListener("click", () => {
+  launchSession("create-lobby", getSelectedGame());
+});
+
+document.getElementById("copyInviteBtn").addEventListener("click", () => {
+  copyInviteLink();
+});
+
 // ---- Easter Egg: click logo 5x ----
 let logoClicks = 0;
 document.getElementById("logo").addEventListener("click", () => {
@@ -255,7 +528,7 @@ document.getElementById("usernameInput").addEventListener("input", (e) => {
   if (e.target.value.toLowerCase() === "blockzone") {
     document.documentElement.setAttribute("data-theme", "neon");
     document.getElementById("themeSelect").value = "neon";
-    localStorage.setItem("bz-theme", "neon");
+    localStorage.setItem(STORAGE_KEYS.theme, "neon");
     e.target.value = "";
     alert("🌈 NEON MODE UNLOCKED!");
   }
@@ -265,3 +538,7 @@ document.getElementById("usernameInput").addEventListener("input", (e) => {
 buildGameGrid();
 animatePlayerCount();
 loadTheme();
+wireSocialButtons();
+handleOAuthCallback();
+loadStoredUserSession();
+loadSavedSession();

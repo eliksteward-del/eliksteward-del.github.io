@@ -211,9 +211,8 @@ function generateLobbyCode() {
   return getSecureRandomString(6);
 }
 
-function createStateToken(provider) {
-  const randomPart = window.crypto?.randomUUID ? window.crypto.randomUUID() : getSecureRandomString(24, "abcdefghijklmnopqrstuvwxyz0123456789");
-  return `${provider}:${randomPart}`;
+function createStateToken() {
+  return window.crypto?.randomUUID ? window.crypto.randomUUID() : getSecureRandomString(24, "abcdefghijklmnopqrstuvwxyz0123456789");
 }
 
 function getStoredJson(storage, key) {
@@ -248,12 +247,15 @@ function renderSessionStatus(session) {
   const title = document.getElementById("sessionStatusTitle");
   const text = document.getElementById("sessionStatusText");
   const copyBtn = document.getElementById("copyInviteBtn");
+  const inviteInput = document.getElementById("inviteLinkInput");
 
-  if (!panel || !title || !text || !copyBtn) return;
+  if (!panel || !title || !text || !copyBtn || !inviteInput) return;
 
   if (!session) {
     panel.hidden = true;
     copyBtn.hidden = true;
+    inviteInput.hidden = true;
+    inviteInput.value = "";
     appState.activeInviteLink = "";
     return;
   }
@@ -266,6 +268,8 @@ function renderSessionStatus(session) {
 
   appState.activeInviteLink = session.type === "create-lobby" ? buildInviteLink(session) : "";
   copyBtn.hidden = !appState.activeInviteLink;
+  inviteInput.hidden = !appState.activeInviteLink;
+  inviteInput.value = appState.activeInviteLink;
 }
 
 function saveSession(session) {
@@ -335,7 +339,7 @@ function beginOAuthLogin(provider) {
   let state;
 
   try {
-    state = createStateToken(provider);
+    state = createStateToken();
   } catch (error) {
     setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
     return;
@@ -357,7 +361,7 @@ function beginOAuthLogin(provider) {
   window.location.assign(`${config.authorizeUrl}?${params.toString()}`);
 }
 
-function completeOAuthLogin(provider) {
+function applyOAuthLoginResult(provider) {
   const config = OAUTH_CONFIG[provider];
   let username;
 
@@ -370,7 +374,7 @@ function completeOAuthLogin(provider) {
 
   const usernameInput = document.getElementById("usernameInput");
   if (usernameInput) usernameInput.value = username;
-  setLoginStatus(`Signed in with ${config.label}.`, "success");
+  setLoginStatus(`Received ${config.label} OAuth redirect.`, "success");
 }
 
 function clearOAuthParams() {
@@ -406,7 +410,7 @@ function handleOAuthCallback() {
   }
 
   sessionStorage.removeItem(STORAGE_KEYS.pendingOAuth);
-  completeOAuthLogin(pending.provider);
+  applyOAuthLoginResult(pending.provider);
   clearOAuthParams();
 }
 
@@ -418,13 +422,18 @@ function loadSavedSession() {
 
 async function copyInviteLink() {
   if (!appState.activeInviteLink) return;
+  const inviteInput = document.getElementById("inviteLinkInput");
 
   try {
     await navigator.clipboard.writeText(appState.activeInviteLink);
     setLoginStatus("Invite link copied.", "success");
   } catch (error) {
-    setLoginStatus("Automatic copy failed, so the invite link is shown below for manual copy.", "warning");
-    window.prompt("Copy this invite link:", appState.activeInviteLink);
+    if (inviteInput) {
+      inviteInput.hidden = false;
+      inviteInput.focus();
+      inviteInput.select();
+    }
+    setLoginStatus("Automatic copy failed, so select the invite link below and copy it manually.", "warning");
   }
 }
 

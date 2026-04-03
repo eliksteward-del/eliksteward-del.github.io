@@ -345,6 +345,17 @@ body {
   line-height: 1.5;
 }
 
+.invite-link-input {
+  width: 100%;
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: var(--body-font);
+  font-size: 13px;
+}
+
 .session-copy-btn {
   font-size: 11px;
   padding: 12px 10px;

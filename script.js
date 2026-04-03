@@ -359,7 +359,15 @@ function beginOAuthLogin(provider) {
 
 function completeOAuthLogin(provider) {
   const config = OAUTH_CONFIG[provider];
-  const username = `${config.label}${getSecureRandomString(4, "23456789ABCDEFGHJKLMNPQRSTUVWXYZ")}`;
+  let username;
+
+  try {
+    username = `${config.label}${getSecureRandomString(4, "23456789ABCDEFGHJKLMNPQRSTUVWXYZ")}`;
+  } catch (error) {
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
+    return;
+  }
+
   const usernameInput = document.getElementById("usernameInput");
   if (usernameInput) usernameInput.value = username;
   setLoginStatus(`Signed in with ${config.label}.`, "success");
@@ -415,6 +423,7 @@ async function copyInviteLink() {
     await navigator.clipboard.writeText(appState.activeInviteLink);
     setLoginStatus("Invite link copied.", "success");
   } catch (error) {
+    setLoginStatus("Automatic copy failed, so the invite link is shown below for manual copy.", "warning");
     window.prompt("Copy this invite link:", appState.activeInviteLink);
   }
 }

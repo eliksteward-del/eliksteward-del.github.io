@@ -119,7 +119,6 @@ const DEFAULT_GAME_MODE = GAME_MODES.find((game) => game.id === DEFAULT_GAME_MOD
 const STORAGE_KEYS = {
   theme: "bz-theme",
   lastSession: "bz-last-session",
-  userSession: "bz-user-session",
   pendingOAuth: "bz-pending-oauth",
 };
 
@@ -161,9 +160,10 @@ const ADJ = ["Blocky","Pixel","Cubic","Neon","Swift","Shadow","Iron","Golden","S
 const NOUNS = ["Builder","Warrior","Miner","Dragon","Wolf","Panda","Knight","Gamer","Ninja","Creeper","Hero","Legend","Storm","Phantom","Blaze"];
 
 function randomUsername() {
-  const adj  = ADJ[Math.floor(Math.random() * ADJ.length)];
-  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-  const num  = Math.floor(Math.random() * 9000) + 1000;
+  const values = getCryptoValues(4);
+  const adj  = ADJ[values[0] % ADJ.length];
+  const noun = NOUNS[values[1] % NOUNS.length];
+  const num  = 1000 + ((values[2] << 8) + values[3]) % 9000;
   return `${adj}${noun}${num}`;
 }
 
@@ -275,12 +275,20 @@ function saveSession(session) {
 
 function ensureUsername() {
   const input = document.getElementById("usernameInput");
-  if (!input) return randomUsername();
+  if (!input) return "";
 
   const current = input.value.trim();
   if (current) return current;
 
-  const generated = randomUsername();
+  let generated;
+
+  try {
+    generated = randomUsername();
+  } catch (error) {
+    setLoginStatus("This browser does not support secure random usernames.", "error");
+    return "";
+  }
+
   input.value = generated;
   setLoginStatus(`Using random username ${generated}.`, "info");
   return generated;
@@ -288,6 +296,7 @@ function ensureUsername() {
 
 function launchSession(type, game = getSelectedGame()) {
   const username = ensureUsername();
+  if (!username) return;
   let session;
 
   try {
@@ -350,14 +359,7 @@ function beginOAuthLogin(provider) {
 
 function completeOAuthLogin(provider) {
   const config = OAUTH_CONFIG[provider];
-  const username = `${config.label}Player`;
-  const userSession = {
-    provider,
-    username,
-    connectedAt: new Date().toISOString(),
-  };
-
-  sessionStorage.setItem(STORAGE_KEYS.userSession, JSON.stringify(userSession));
+  const username = `${config.label}${getSecureRandomString(4, "23456789ABCDEFGHJKLMNPQRSTUVWXYZ")}`;
   const usernameInput = document.getElementById("usernameInput");
   if (usernameInput) usernameInput.value = username;
   setLoginStatus(`Signed in with ${config.label}.`, "success");
@@ -398,16 +400,6 @@ function handleOAuthCallback() {
   sessionStorage.removeItem(STORAGE_KEYS.pendingOAuth);
   completeOAuthLogin(pending.provider);
   clearOAuthParams();
-}
-
-function loadStoredUserSession() {
-  const userSession = getStoredJson(sessionStorage, STORAGE_KEYS.userSession);
-  if (!userSession) return;
-
-  const usernameInput = document.getElementById("usernameInput");
-  if (usernameInput) usernameInput.value = userSession.username;
-  const providerLabel = OAUTH_CONFIG[userSession.provider]?.label || userSession.provider;
-  setLoginStatus(`Signed in with ${providerLabel}.`, "success");
 }
 
 function loadSavedSession() {
@@ -520,7 +512,12 @@ document.getElementById("playBtn").addEventListener("click", () => {
 
 // ---- Dice Button ----
 document.getElementById("diceBtn").addEventListener("click", () => {
-  document.getElementById("usernameInput").value = randomUsername();
+  try {
+    document.getElementById("usernameInput").value = randomUsername();
+    setLoginStatus("Generated a random username.", "info");
+  } catch (error) {
+    setLoginStatus("This browser does not support secure random usernames.", "error");
+  }
 });
 
 // ---- Nav Buttons ----
@@ -575,5 +572,4 @@ animatePlayerCount();
 loadTheme();
 wireSocialButtons();
 handleOAuthCallback();
-loadStoredUserSession();
 loadSavedSession();

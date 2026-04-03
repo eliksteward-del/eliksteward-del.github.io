@@ -115,6 +115,7 @@ const GAME_MODES = [
 ];
 
 const DEFAULT_GAME_MODE_ID = "survival";
+const DEFAULT_GAME_MODE = GAME_MODES.find((game) => game.id === DEFAULT_GAME_MODE_ID) || GAME_MODES[0];
 const STORAGE_KEYS = {
   theme: "bz-theme",
   lastSession: "bz-last-session",
@@ -180,34 +181,49 @@ function animatePlayerCount() {
 }
 
 function getGameById(id) {
-  return GAME_MODES.find((game) => game.id === id) || GAME_MODES.find((game) => game.id === DEFAULT_GAME_MODE_ID) || GAME_MODES[0];
+  return GAME_MODES.find((game) => game.id === id) || DEFAULT_GAME_MODE;
 }
 
 function getSelectedGame() {
-  return appState.selectedGame || getGameById(DEFAULT_GAME_MODE_ID);
+  return appState.selectedGame || DEFAULT_GAME_MODE;
 }
 
 function getOAuthRedirectUri() {
   return `${window.location.origin}${window.location.pathname}`;
 }
 
+function getCryptoValues(length) {
+  if (!window.crypto?.getRandomValues) {
+    throw new Error("Secure random values are not available in this browser.");
+  }
+
+  const values = new Uint8Array(length);
+  window.crypto.getRandomValues(values);
+  return values;
+}
+
+function getSecureRandomString(length, alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789") {
+  const values = getCryptoValues(length);
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
+}
+
 function generateLobbyCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
+  return getSecureRandomString(6);
 }
 
 function createStateToken(provider) {
-  const randomPart = window.crypto?.randomUUID ? window.crypto.randomUUID() : Math.random().toString(36).slice(2);
+  const randomPart = window.crypto?.randomUUID ? window.crypto.randomUUID() : getSecureRandomString(24, "abcdefghijklmnopqrstuvwxyz0123456789");
   return `${provider}:${randomPart}`;
 }
 
-function getStoredJson(key) {
-  const rawValue = localStorage.getItem(key);
+function getStoredJson(storage, key) {
+  const rawValue = storage.getItem(key);
   if (!rawValue) return null;
 
   try {
     return JSON.parse(rawValue);
   } catch (error) {
-    localStorage.removeItem(key);
+    storage.removeItem(key);
     return null;
   }
 }
@@ -272,14 +288,21 @@ function ensureUsername() {
 
 function launchSession(type, game = getSelectedGame()) {
   const username = ensureUsername();
-  const session = {
-    type,
-    username,
-    gameId: game.id,
-    gameName: game.name,
-    code: generateLobbyCode(),
-    createdAt: new Date().toISOString(),
-  };
+  let session;
+
+  try {
+    session = {
+      type,
+      username,
+      gameId: game.id,
+      gameName: game.name,
+      code: generateLobbyCode(),
+      createdAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    setLoginStatus("This browser does not support secure lobby codes.", "error");
+    return;
+  }
 
   saveSession(session);
   closeModal("gameModeModal");
@@ -300,8 +323,16 @@ function beginOAuthLogin(provider) {
     return;
   }
 
-  const state = createStateToken(provider);
-  localStorage.setItem(STORAGE_KEYS.pendingOAuth, JSON.stringify({ provider, state }));
+  let state;
+
+  try {
+    state = createStateToken(provider);
+  } catch (error) {
+    setLoginStatus("This browser does not support secure OAuth sign-in.", "error");
+    return;
+  }
+
+  sessionStorage.setItem(STORAGE_KEYS.pendingOAuth, JSON.stringify({ provider, state }));
 
   const params = new URLSearchParams({
     client_id: config.clientId,
@@ -326,8 +357,9 @@ function completeOAuthLogin(provider) {
     connectedAt: new Date().toISOString(),
   };
 
-  localStorage.setItem(STORAGE_KEYS.userSession, JSON.stringify(userSession));
-  document.getElementById("usernameInput").value = username;
+  sessionStorage.setItem(STORAGE_KEYS.userSession, JSON.stringify(userSession));
+  const usernameInput = document.getElementById("usernameInput");
+  if (usernameInput) usernameInput.value = username;
   setLoginStatus(`Signed in with ${config.label}.`, "success");
 }
 
@@ -345,11 +377,11 @@ function handleOAuthCallback() {
   const code = params.get("code");
   const state = params.get("state");
   const error = params.get("error");
-  const pending = getStoredJson(STORAGE_KEYS.pendingOAuth);
+  const pending = getStoredJson(sessionStorage, STORAGE_KEYS.pendingOAuth);
 
   if (error) {
     setLoginStatus("OAuth sign-in was cancelled or failed.", "warning");
-    localStorage.removeItem(STORAGE_KEYS.pendingOAuth);
+    sessionStorage.removeItem(STORAGE_KEYS.pendingOAuth);
     clearOAuthParams();
     return;
   }
@@ -358,27 +390,28 @@ function handleOAuthCallback() {
 
   if (pending.state !== state || !OAUTH_CONFIG[pending.provider]) {
     setLoginStatus("OAuth sign-in could not be verified.", "error");
-    localStorage.removeItem(STORAGE_KEYS.pendingOAuth);
+    sessionStorage.removeItem(STORAGE_KEYS.pendingOAuth);
     clearOAuthParams();
     return;
   }
 
-  localStorage.removeItem(STORAGE_KEYS.pendingOAuth);
+  sessionStorage.removeItem(STORAGE_KEYS.pendingOAuth);
   completeOAuthLogin(pending.provider);
   clearOAuthParams();
 }
 
 function loadStoredUserSession() {
-  const userSession = getStoredJson(STORAGE_KEYS.userSession);
+  const userSession = getStoredJson(sessionStorage, STORAGE_KEYS.userSession);
   if (!userSession) return;
 
-  document.getElementById("usernameInput").value = userSession.username;
+  const usernameInput = document.getElementById("usernameInput");
+  if (usernameInput) usernameInput.value = userSession.username;
   const providerLabel = OAUTH_CONFIG[userSession.provider]?.label || userSession.provider;
   setLoginStatus(`Signed in with ${providerLabel}.`, "success");
 }
 
 function loadSavedSession() {
-  const session = getStoredJson(STORAGE_KEYS.lastSession);
+  const session = getStoredJson(localStorage, STORAGE_KEYS.lastSession);
   if (!session) return;
   renderSessionStatus(session);
 }
@@ -401,8 +434,10 @@ function wireSocialButtons() {
     button.addEventListener("click", () => setLoginStatus(message, "warning"));
   });
 
-  document.getElementById("githubLoginBtn").addEventListener("click", () => beginOAuthLogin("github"));
-  document.getElementById("figmaLoginBtn").addEventListener("click", () => beginOAuthLogin("figma"));
+  const githubButton = document.getElementById("githubLoginBtn");
+  const figmaButton = document.getElementById("figmaLoginBtn");
+  if (githubButton) githubButton.addEventListener("click", () => beginOAuthLogin("github"));
+  if (figmaButton) figmaButton.addEventListener("click", () => beginOAuthLogin("figma"));
 }
 
 // ---- Build Game Cards ----

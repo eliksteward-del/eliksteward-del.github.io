@@ -114,14 +114,56 @@ const GAME_MODES = [
   },
 ];
 
+const DEFAULT_GAME_MODE_ID = "survival";
+const DEFAULT_GAME_MODE = GAME_MODES.find((game) => game.id === DEFAULT_GAME_MODE_ID) || GAME_MODES[0];
+const STORAGE_KEYS = {
+  theme: "bz-theme",
+  lastSession: "bz-last-session",
+  pendingOAuth: "bz-pending-oauth",
+};
+
+const OAUTH_CONFIG = {
+  github: {
+    label: "GitHub",
+    clientId: "Iv23liSDtMzhXUAadUPm",
+    authorizeUrl: "https://github.com/login/oauth/authorize",
+    scope: "read:user user:email",
+    extraParams: {
+      allow_signup: "true",
+    },
+  },
+  figma: {
+    label: "Figma",
+    clientId: "",
+    authorizeUrl: "https://www.figma.com/oauth",
+    scope: "file_read",
+    extraParams: {
+      response_type: "code",
+    },
+  },
+};
+
+const SOCIAL_PLACEHOLDERS = {
+  google: "Google login is not configured yet.",
+  discord: "Discord login is not configured yet.",
+  microsoft: "Microsoft login is not configured yet.",
+  apple: "Apple login is not configured yet.",
+};
+
+const appState = {
+  selectedGame: null,
+  activeInviteLink: "",
+};
+
 // ---- Random Usernames ----
 const ADJ = ["Blocky","Pixel","Cubic","Neon","Swift","Shadow","Iron","Golden","Sky","Lava","Frost","Cyber","Turbo","Mighty","Silent"];
 const NOUNS = ["Builder","Warrior","Miner","Dragon","Wolf","Panda","Knight","Gamer","Ninja","Creeper","Hero","Legend","Storm","Phantom","Blaze"];
 
 function randomUsername() {
-  const adj  = ADJ[Math.floor(Math.random() * ADJ.length)];
-  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-  const num  = Math.floor(Math.random() * 9000) + 1000;
+  const values = getCryptoValues(4);
+  const adj  = ADJ[values[0] % ADJ.length];
+  const noun = NOUNS[values[1] % NOUNS.length];
+  const num  = 1000 + ((values[2] << 8) + values[3]) % 9000;
   return `${adj}${noun}${num}`;
 }
 
@@ -136,6 +178,276 @@ function animatePlayerCount() {
     if (base > 9999) base = 9999;
     el.textContent = `🟢 ${base.toLocaleString()}`;
   }, 3000);
+}
+
+function getGameById(id) {
+  return GAME_MODES.find((game) => game.id === id) || DEFAULT_GAME_MODE;
+}
+
+function getSelectedGame() {
+  return appState.selectedGame || DEFAULT_GAME_MODE;
+}
+
+function getOAuthRedirectUri() {
+  return `${window.location.origin}${window.location.pathname}`;
+}
+
+function getCryptoValues(length) {
+  if (!window.crypto?.getRandomValues) {
+    throw new Error("Secure random values are not available in this browser.");
+  }
+
+  const values = new Uint8Array(length);
+  window.crypto.getRandomValues(values);
+  return values;
+}
+
+function getSecureRandomString(length, alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789") {
+  const values = getCryptoValues(length);
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
+}
+
+function generateLobbyCode() {
+  return getSecureRandomString(6);
+}
+
+function createStateToken() {
+  return window.crypto?.randomUUID ? window.crypto.randomUUID() : getSecureRandomString(24, "abcdefghijklmnopqrstuvwxyz0123456789");
+}
+
+function getStoredJson(storage, key) {
+  const rawValue = storage.getItem(key);
+  if (!rawValue) return null;
+
+  try {
+    return JSON.parse(rawValue);
+  } catch (error) {
+    storage.removeItem(key);
+    return null;
+  }
+}
+
+function buildInviteLink(session) {
+  const inviteUrl = new URL(window.location.href);
+  inviteUrl.searchParams.set("lobby", session.code);
+  inviteUrl.searchParams.set("game", session.gameId);
+  return inviteUrl.toString();
+}
+
+function setLoginStatus(message, tone = "") {
+  const statusEl = document.getElementById("loginStatus");
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.className = "login-status";
+  if (tone) statusEl.classList.add(tone);
+}
+
+function renderSessionStatus(session) {
+  const panel = document.getElementById("sessionStatus");
+  const title = document.getElementById("sessionStatusTitle");
+  const text = document.getElementById("sessionStatusText");
+  const copyBtn = document.getElementById("copyInviteBtn");
+  const inviteInput = document.getElementById("inviteLinkInput");
+
+  if (!panel || !title || !text || !copyBtn || !inviteInput) return;
+
+  if (!session) {
+    panel.hidden = true;
+    copyBtn.hidden = true;
+    inviteInput.hidden = true;
+    inviteInput.value = "";
+    appState.activeInviteLink = "";
+    return;
+  }
+
+  panel.hidden = false;
+  title.textContent = session.type === "create-lobby" ? `Lobby ${session.code} created` : `${session.gameName} quick play ready`;
+  text.textContent = session.type === "create-lobby"
+    ? `${session.username} can share lobby ${session.code} to invite friends to ${session.gameName}.`
+    : `${session.username} joined ${session.gameName} quick play. Match code: ${session.code}.`;
+
+  appState.activeInviteLink = session.type === "create-lobby" ? buildInviteLink(session) : "";
+  copyBtn.hidden = !appState.activeInviteLink;
+  inviteInput.hidden = !appState.activeInviteLink;
+  inviteInput.value = appState.activeInviteLink;
+}
+
+function saveSession(session) {
+  localStorage.setItem(STORAGE_KEYS.lastSession, JSON.stringify(session));
+  renderSessionStatus(session);
+}
+
+function ensureUsername() {
+  const input = document.getElementById("usernameInput");
+  if (!input) return "";
+
+  const current = input.value.trim();
+  if (current) return current;
+
+  let generated;
+
+  try {
+    generated = randomUsername();
+  } catch (error) {
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
+    return "";
+  }
+
+  input.value = generated;
+  setLoginStatus(`Using random username ${generated}.`, "info");
+  return generated;
+}
+
+function launchSession(type, game = getSelectedGame()) {
+  const username = ensureUsername();
+  if (!username) return;
+  let session;
+
+  try {
+    session = {
+      type,
+      username,
+      gameId: game.id,
+      gameName: game.name,
+      code: generateLobbyCode(),
+      createdAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
+    return;
+  }
+
+  saveSession(session);
+  closeModal("gameModeModal");
+  setLoginStatus(
+    type === "create-lobby"
+      ? `Lobby ${session.code} is ready for ${game.name}.`
+      : `Quick play connected for ${game.name} as ${username}.`,
+    "success"
+  );
+}
+
+function beginOAuthLogin(provider) {
+  const config = OAUTH_CONFIG[provider];
+  if (!config) return;
+
+  if (!config.clientId) {
+    setLoginStatus(`${config.label} login is ready, but I still need the ${config.label} client ID.`, "warning");
+    return;
+  }
+
+  let state;
+
+  try {
+    state = createStateToken();
+  } catch (error) {
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
+    return;
+  }
+
+  sessionStorage.setItem(STORAGE_KEYS.pendingOAuth, JSON.stringify({ provider, state }));
+
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: getOAuthRedirectUri(),
+    scope: config.scope,
+    state,
+  });
+
+  Object.entries(config.extraParams || {}).forEach(([key, value]) => {
+    params.set(key, value);
+  });
+
+  window.location.assign(`${config.authorizeUrl}?${params.toString()}`);
+}
+
+function applyOAuthLoginResult(provider) {
+  const config = OAUTH_CONFIG[provider];
+  let username;
+
+  try {
+    username = `${config.label}${getSecureRandomString(4, "23456789ABCDEFGHJKLMNPQRSTUVWXYZ")}`;
+  } catch (error) {
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
+    return;
+  }
+
+  const usernameInput = document.getElementById("usernameInput");
+  if (usernameInput) usernameInput.value = username;
+  setLoginStatus(`Received ${config.label} OAuth redirect.`, "success");
+}
+
+function clearOAuthParams() {
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.delete("code");
+  nextUrl.searchParams.delete("state");
+  nextUrl.searchParams.delete("error");
+  nextUrl.searchParams.delete("error_description");
+  window.history.replaceState({}, document.title, nextUrl.toString());
+}
+
+function handleOAuthCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const state = params.get("state");
+  const error = params.get("error");
+  const pending = getStoredJson(sessionStorage, STORAGE_KEYS.pendingOAuth);
+
+  if (error) {
+    setLoginStatus("OAuth sign-in was cancelled or failed.", "warning");
+    sessionStorage.removeItem(STORAGE_KEYS.pendingOAuth);
+    clearOAuthParams();
+    return;
+  }
+
+  if (!code || !state || !pending) return;
+
+  if (pending.state !== state || !OAUTH_CONFIG[pending.provider]) {
+    setLoginStatus("OAuth sign-in could not be verified.", "error");
+    sessionStorage.removeItem(STORAGE_KEYS.pendingOAuth);
+    clearOAuthParams();
+    return;
+  }
+
+  sessionStorage.removeItem(STORAGE_KEYS.pendingOAuth);
+  applyOAuthLoginResult(pending.provider);
+  clearOAuthParams();
+}
+
+function loadSavedSession() {
+  const session = getStoredJson(localStorage, STORAGE_KEYS.lastSession);
+  if (!session) return;
+  renderSessionStatus(session);
+}
+
+async function copyInviteLink() {
+  if (!appState.activeInviteLink) return;
+  const inviteInput = document.getElementById("inviteLinkInput");
+
+  try {
+    await navigator.clipboard.writeText(appState.activeInviteLink);
+    setLoginStatus("Invite link copied.", "success");
+  } catch (error) {
+    if (inviteInput) {
+      inviteInput.hidden = false;
+      inviteInput.focus();
+      inviteInput.select();
+    }
+    setLoginStatus("Automatic copy failed, so select the invite link below and copy it manually.", "warning");
+  }
+}
+
+function wireSocialButtons() {
+  Object.entries(SOCIAL_PLACEHOLDERS).forEach(([provider, message]) => {
+    const button = document.getElementById(`${provider}LoginBtn`);
+    if (!button) return;
+    button.addEventListener("click", () => setLoginStatus(message, "warning"));
+  });
+
+  const githubButton = document.getElementById("githubLoginBtn");
+  const figmaButton = document.getElementById("figmaLoginBtn");
+  if (githubButton) githubButton.addEventListener("click", () => beginOAuthLogin("github"));
+  if (figmaButton) figmaButton.addEventListener("click", () => beginOAuthLogin("figma"));
 }
 
 // ---- Build Game Cards ----
@@ -167,6 +479,7 @@ function buildGameGrid() {
 
 // ---- Open Game Modal ----
 function openGameModal(game) {
+  appState.selectedGame = game;
   document.getElementById("modalGameIcon").textContent   = game.icon;
   document.getElementById("modalGameTitle").textContent  = game.name;
   document.getElementById("modalGameDesc").textContent   = game.desc;
@@ -200,11 +513,11 @@ function toggleSetting(btn) {
 
 function changeTheme(value) {
   document.documentElement.setAttribute("data-theme", value === "dark" ? "" : value);
-  localStorage.setItem("bz-theme", value);
+  localStorage.setItem(STORAGE_KEYS.theme, value);
 }
 
 function loadTheme() {
-  const saved = localStorage.getItem("bz-theme") || "dark";
+  const saved = localStorage.getItem(STORAGE_KEYS.theme) || "dark";
   const sel = document.getElementById("themeSelect");
   if (sel) sel.value = saved;
   changeTheme(saved);
@@ -212,19 +525,17 @@ function loadTheme() {
 
 // ---- Play Button ----
 document.getElementById("playBtn").addEventListener("click", () => {
-  const username = document.getElementById("usernameInput").value.trim();
-  if (!username) {
-    const generated = randomUsername();
-    document.getElementById("usernameInput").value = generated;
-    alert(`No username entered – playing as: ${generated}\n\n(Game launching not yet implemented – this is a UI preview)`);
-  } else {
-    alert(`Welcome, ${username}!\n\n(Game launching not yet implemented – this is a UI preview)`);
-  }
+  launchSession("quick-play", getSelectedGame());
 });
 
 // ---- Dice Button ----
 document.getElementById("diceBtn").addEventListener("click", () => {
-  document.getElementById("usernameInput").value = randomUsername();
+  try {
+    document.getElementById("usernameInput").value = randomUsername();
+    setLoginStatus("Generated a random username.", "info");
+  } catch (error) {
+    setLoginStatus("This feature requires a modern browser with secure random number generation.", "error");
+  }
 });
 
 // ---- Nav Buttons ----
@@ -241,6 +552,18 @@ document.getElementById("friendsBtn").addEventListener("click", (e) => {
   openModal("friendsModal");
 });
 
+document.getElementById("modalQuickPlayBtn").addEventListener("click", () => {
+  launchSession("quick-play", getSelectedGame());
+});
+
+document.getElementById("modalCreateLobbyBtn").addEventListener("click", () => {
+  launchSession("create-lobby", getSelectedGame());
+});
+
+document.getElementById("copyInviteBtn").addEventListener("click", () => {
+  copyInviteLink();
+});
+
 // ---- Easter Egg: click logo 5x ----
 let logoClicks = 0;
 document.getElementById("logo").addEventListener("click", () => {
@@ -255,7 +578,7 @@ document.getElementById("usernameInput").addEventListener("input", (e) => {
   if (e.target.value.toLowerCase() === "blockzone") {
     document.documentElement.setAttribute("data-theme", "neon");
     document.getElementById("themeSelect").value = "neon";
-    localStorage.setItem("bz-theme", "neon");
+    localStorage.setItem(STORAGE_KEYS.theme, "neon");
     e.target.value = "";
     alert("🌈 NEON MODE UNLOCKED!");
   }
@@ -265,3 +588,6 @@ document.getElementById("usernameInput").addEventListener("input", (e) => {
 buildGameGrid();
 animatePlayerCount();
 loadTheme();
+wireSocialButtons();
+handleOAuthCallback();
+loadSavedSession();

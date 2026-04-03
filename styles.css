@@ -237,7 +237,7 @@ body {
 
 .social-logins {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   width: 100%;
 }
@@ -267,6 +267,22 @@ body {
 .discord-btn { background: #5865f2; }
 .microsoft-btn { background: #00a4ef; }
 .apple-btn   { background: #222; }
+.github-btn  { background: #24292f; }
+.figma-btn   { background: linear-gradient(135deg, #f24e1e, #a259ff 55%, #0acf83); }
+
+.login-status {
+  min-height: 20px;
+  width: 100%;
+  margin: -4px 0 0;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.login-status.success { color: var(--green); }
+.login-status.warning { color: var(--accent2); }
+.login-status.error { color: var(--accent); }
+.login-status.info { color: var(--text); }
 
 .play-btn {
   width: 100%;
@@ -304,6 +320,45 @@ body {
 .player-count {
   font-size: 14px;
   color: var(--text-muted);
+}
+
+.session-status {
+  width: 100%;
+  background: var(--bg2);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-status strong {
+  color: var(--accent2);
+  font-size: 14px;
+}
+
+.session-status p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.invite-link-input {
+  width: 100%;
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: var(--body-font);
+  font-size: 13px;
+}
+
+.session-copy-btn {
+  font-size: 11px;
+  padding: 12px 10px;
 }
 
 /* ---- GAME MODES ---- */
